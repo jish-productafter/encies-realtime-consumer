@@ -4,8 +4,8 @@ services:
   app:
     build: .
     container_name: encies-realtime-consumer
-    ports:
-      - "8000:8000"
+    expose:
+      - "8000"
     environment:
       - CLICKHOUSE_HOST=${CLICKHOUSE_HOST}
       - CLICKHOUSE_USER=${CLICKHOUSE_USER}
