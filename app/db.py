@@ -425,3 +425,108 @@ def get_trader_classes_from_db_map(proxy_wallets: List[str]) -> Dict[str, Trader
 
     print(f"[TraderClass Cache] Returning {len(result_dict)} trader classes total")
     return result_dict
+
+
+def get_trade_summary_by_slug(slug: str) -> List[Dict[str, Any]]:
+    """
+    Get trade summary from polymarket.current_trades table filtered by slug.
+    Returns token holdings by trader based on BUY and SELL sides.
+
+    Args:
+        slug: The slug to filter trades by
+
+    Returns:
+        List of dictionaries containing trade summary data for each trader/asset/outcome combination
+    """
+    # Escape the slug to prevent SQL injection
+    escaped_slug = slug.replace("'", "''")
+
+    query = f"""
+        SELECT 
+            proxyWallet,
+            pseudonym,
+            asset,
+            conditionId,
+            title,
+            outcome,
+            -- Total tokens bought
+            sum(if(side = 'BUY', size, 0)) as total_buy_size,
+            -- Total tokens sold
+            sum(if(side = 'SELL', size, 0)) as total_sell_size,
+            -- Net position (positive = holding, negative = short)
+            sum(if(side = 'BUY', size, -size)) as net_position,
+            -- Total value bought
+            sum(if(side = 'BUY', size * price, 0)) as total_buy_value,
+            -- Total value sold
+            sum(if(side = 'SELL', size * price, 0)) as total_sell_value,
+            -- Net cash flow (positive = net profit from trades, negative = net cost)
+            sum(if(side = 'SELL', size * price, 0)) - sum(if(side = 'BUY', size * price, 0)) as net_cash_flow,
+            -- Number of buy trades
+            countIf(side = 'BUY') as buy_count,
+            -- Number of sell trades
+            countIf(side = 'SELL') as sell_count,
+            -- Latest trade timestamp
+            max(timestamp) as last_trade_time
+        FROM polymarket.current_trades FINAL
+        WHERE slug = '{escaped_slug}' AND side IN ('BUY', 'SELL')
+        GROUP BY proxyWallet, pseudonym, asset, conditionId, title, outcome
+        HAVING net_position != 0  -- Only show positions that are not zero
+        ORDER BY proxyWallet, asset, outcome
+    """
+
+    try:
+        result = client.execute(query)
+        # Column names matching the SELECT order
+        column_names = [
+            "proxyWallet",
+            "pseudonym",
+            "asset",
+            "conditionId",
+            "title",
+            "outcome",
+            "total_buy_size",
+            "total_sell_size",
+            "net_position",
+            "total_buy_value",
+            "total_sell_value",
+            "net_cash_flow",
+            "buy_count",
+            "sell_count",
+            "last_trade_time",
+        ]
+
+        summaries = []
+        for row in result:
+            # Convert tuple to dict
+            summary_dict = dict(zip(column_names, row))
+
+            # Convert datetime objects to ISO format strings
+            if summary_dict.get("last_trade_time") and isinstance(
+                summary_dict["last_trade_time"], datetime
+            ):
+                summary_dict["last_trade_time"] = summary_dict[
+                    "last_trade_time"
+                ].isoformat()
+
+            # Convert numeric types to appropriate Python types
+            for numeric_field in [
+                "total_buy_size",
+                "total_sell_size",
+                "net_position",
+                "total_buy_value",
+                "total_sell_value",
+                "net_cash_flow",
+            ]:
+                if summary_dict.get(numeric_field) is not None:
+                    summary_dict[numeric_field] = float(summary_dict[numeric_field])
+
+            for int_field in ["buy_count", "sell_count"]:
+                if summary_dict.get(int_field) is not None:
+                    summary_dict[int_field] = int(summary_dict[int_field])
+
+            summaries.append(summary_dict)
+
+        return summaries
+    except Exception as e:
+        print(f"Error getting trade summary by slug: {e}")
+        return []

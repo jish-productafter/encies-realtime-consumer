@@ -8,7 +8,7 @@ import json
 import asyncio
 from typing import Set, Dict, Any, List
 from app.trade_service import TradeService
-from app.db import get_trades_by_slug
+from app.db import get_trades_by_slug, get_trade_summary_by_slug
 
 app = FastAPI(title="Polymarket Trades WebSocket Server")
 
@@ -123,6 +123,17 @@ async def get_trades(
     """
     trades = get_trades_by_slug(slug)
     return {"slug": slug, "count": len(trades), "trades": trades}
+
+
+@app.get("/trade-summary")
+async def get_trade_summary(
+    slug: str = Query(..., description="The slug to filter trades by")
+):
+    """
+    Get trade summary from polymarket.current_trades table filtered by slug.
+    """
+    summary = get_trade_summary_by_slug(slug)
+    return {"slug": slug, "summary": summary}
 
 
 @app.websocket("/trades")
