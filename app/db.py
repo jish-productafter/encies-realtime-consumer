@@ -7,6 +7,7 @@ from typing import Any, List, Optional, Dict
 from pathlib import Path
 from dotenv import load_dotenv
 from app.schema import TraderClass
+from redis_client import redis
 
 
 # Find .env file by searching from current directory up to project root
@@ -322,33 +323,105 @@ def get_trades_by_slug(slug: str) -> List[Dict[str, Any]]:
 
 
 def get_trader_classes_from_db_map(proxy_wallets: List[str]) -> Dict[str, TraderClass]:
-    # Convert input to lowercase and quote for SQL
+    # Convert input to lowercase
     proxy_wallets_lower = [wallet.lower() for wallet in proxy_wallets]
-    quoted_wallets = [f"'{wallet}'" for wallet in proxy_wallets_lower]
-    query = f"SELECT proxyWallet, global_roi_pct, consistency_rating, recency_weighted_pnl, trader_class, calculated_at FROM polymarket.trader_alpha_scores final WHERE lower(proxyWallet) IN ({','.join(quoted_wallets)})"
+    result_dict = {}
+    cache_misses = []
+    cache_hits = []
+
+    print(
+        f"[TraderClass Cache] Checking cache for {len(proxy_wallets_lower)} proxy wallets"
+    )
+
+    # Check Redis cache for each proxyWallet
     try:
-        result = client.execute(query)
-        # Convert tuples to dictionaries
-        # Column order: proxyWallet, global_roi_pct, consistency_rating, recency_weighted_pnl, trader_class, calculated_at
-        column_names = [
-            "proxyWallet",
-            "global_roi_pct",
-            "consistency_rating",
-            "recency_weighted_pnl",
-            "trader_class",
-            "calculated_at",
-        ]
-        result_dict = {}
-        for row in result:
-            # Convert tuple to dict, handling datetime conversion
-            row_dict = dict(zip(column_names, row))
-            # Convert datetime to string if needed
-            if isinstance(row_dict["calculated_at"], datetime):
-                row_dict["calculated_at"] = row_dict["calculated_at"].strftime(
-                    "%Y-%m-%d %H:%M:%S"
-                )
-            result_dict[row[0].lower()] = TraderClass.model_validate(row_dict)
-        return result_dict
+        for wallet_lower in proxy_wallets_lower:
+            cache_key = f"trader_class_{wallet_lower}"
+            cached_data = redis.get(cache_key)
+            if cached_data:
+                # Cache hit - deserialize and add to result
+                try:
+                    trader_data = json.loads(cached_data)
+                    result_dict[wallet_lower] = TraderClass.model_validate(trader_data)
+                    cache_hits.append(wallet_lower)
+                    print(f"[TraderClass Cache] ✓ Cache HIT for {wallet_lower}")
+                except (json.JSONDecodeError, Exception) as e:
+                    print(
+                        f"[TraderClass Cache] ✗ Error parsing cached trader class for {wallet_lower}: {e}"
+                    )
+                    # If cache data is corrupted, treat as cache miss
+                    cache_misses.append(wallet_lower)
+            else:
+                # Cache miss - need to query DB
+                cache_misses.append(wallet_lower)
+                print(f"[TraderClass Cache] ✗ Cache MISS for {wallet_lower}")
     except Exception as e:
-        print(f"Error getting trader classes from DB map: {e}")
-        return {}
+        print(f"[TraderClass Cache] ✗ Error checking Redis cache: {e}")
+        # If Redis fails, treat all as cache misses
+        cache_misses = proxy_wallets_lower
+        cache_hits = []
+
+    print(
+        f"[TraderClass Cache] Summary: {len(cache_hits)} hits, {len(cache_misses)} misses"
+    )
+
+    # Query DB only for cache misses
+    if cache_misses:
+        print(
+            f"[TraderClass Cache] Querying DB for {len(cache_misses)} wallets: {', '.join(cache_misses[:5])}{'...' if len(cache_misses) > 5 else ''}"
+        )
+        quoted_wallets = [f"'{wallet}'" for wallet in cache_misses]
+        query = f"SELECT proxyWallet, global_roi_pct, consistency_rating, recency_weighted_pnl, trader_class, calculated_at FROM polymarket.trader_alpha_scores final WHERE lower(proxyWallet) IN ({','.join(quoted_wallets)})"
+        try:
+            db_result = client.execute(query)
+            db_rows_count = 0
+            cached_count = 0
+
+            # Convert tuples to dictionaries
+            # Column order: proxyWallet, global_roi_pct, consistency_rating, recency_weighted_pnl, trader_class, calculated_at
+            column_names = [
+                "proxyWallet",
+                "global_roi_pct",
+                "consistency_rating",
+                "recency_weighted_pnl",
+                "trader_class",
+                "calculated_at",
+            ]
+            for row in db_result:
+                db_rows_count += 1
+                # Convert tuple to dict, handling datetime conversion
+                row_dict = dict(zip(column_names, row))
+                # Convert datetime to string if needed
+                if isinstance(row_dict["calculated_at"], datetime):
+                    row_dict["calculated_at"] = row_dict["calculated_at"].strftime(
+                        "%Y-%m-%d %H:%M:%S"
+                    )
+                wallet_lower = row[0].lower()
+                trader_class = TraderClass.model_validate(row_dict)
+                result_dict[wallet_lower] = trader_class
+
+                # Cache the result in Redis
+                try:
+                    cache_key = f"trader_class_{wallet_lower}"
+                    # Serialize TraderClass to JSON for caching
+                    trader_json = trader_class.model_dump_json()
+                    redis.set(cache_key, trader_json)
+                    cached_count += 1
+                    print(
+                        f"[TraderClass Cache] ✓ Cached trader class for {wallet_lower}"
+                    )
+                except Exception as e:
+                    print(
+                        f"[TraderClass Cache] ✗ Error caching trader class for {wallet_lower}: {e}"
+                    )
+
+            print(
+                f"[TraderClass Cache] DB query returned {db_rows_count} rows, cached {cached_count} entries"
+            )
+        except Exception as e:
+            print(
+                f"[TraderClass Cache] ✗ Error getting trader classes from DB map: {e}"
+            )
+
+    print(f"[TraderClass Cache] Returning {len(result_dict)} trader classes total")
+    return result_dict
