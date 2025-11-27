@@ -2,12 +2,13 @@
 WebSocket server for streaming trade data.
 """
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query
 from fastapi.responses import HTMLResponse
 import json
 import asyncio
-from typing import Set, Dict, Any
+from typing import Set, Dict, Any, List
 from app.trade_service import TradeService
+from app.db import get_trades_by_slug
 
 app = FastAPI(title="Polymarket Trades WebSocket Server")
 
@@ -105,6 +106,23 @@ async def get_root():
     </html>
     """
     return HTMLResponse(content=html)
+
+
+@app.get("/trades")
+async def get_trades(
+    slug: str = Query(..., description="The slug to filter trades by")
+):
+    """
+    Get trades from polymarket.current_trades table filtered by slug.
+
+    Args:
+        slug: The slug to filter trades by
+
+    Returns:
+        List of trades matching the slug
+    """
+    trades = get_trades_by_slug(slug)
+    return {"slug": slug, "count": len(trades), "trades": trades}
 
 
 @app.websocket("/trades")

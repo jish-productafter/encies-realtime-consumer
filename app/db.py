@@ -225,6 +225,102 @@ def bulk_insert_current_trades(data: List[Dict[str, Any]]):
         print(f"Error bulk inserting trades: {e}")
 
 
+def get_trades_by_slug(slug: str) -> List[Dict[str, Any]]:
+    """
+    Get trades from polymarket.current_trades table filtered by slug.
+
+    Args:
+        slug: The slug to filter trades by
+
+    Returns:
+        List of dictionaries containing trade data
+    """
+    # Escape the slug to prevent SQL injection
+    # Replace single quotes with two single quotes (SQL escaping)
+    escaped_slug = slug.replace("'", "''")
+    query = f"""
+        SELECT 
+            id, asset, bio, conditionId, eventSlug, icon, name, outcome, outcomeIndex,
+            price, profileImage, proxyWallet, pseudonym, side, size, slug, timestamp,
+            title, transactionHash, topic, type, messageTimestamp, connection_id, rawType,
+            global_roi_pct, consistency_rating, recency_weighted_pnl, trader_class, calculated_at
+        FROM polymarket.current_trades
+        WHERE slug = '{escaped_slug}'
+        ORDER BY timestamp DESC
+    """
+    try:
+        result = client.execute(query)
+        # Column names matching the SELECT order
+        column_names = [
+            "id",
+            "asset",
+            "bio",
+            "conditionId",
+            "eventSlug",
+            "icon",
+            "name",
+            "outcome",
+            "outcomeIndex",
+            "price",
+            "profileImage",
+            "proxyWallet",
+            "pseudonym",
+            "side",
+            "size",
+            "slug",
+            "timestamp",
+            "title",
+            "transactionHash",
+            "topic",
+            "type",
+            "messageTimestamp",
+            "connection_id",
+            "rawType",
+            "global_roi_pct",
+            "consistency_rating",
+            "recency_weighted_pnl",
+            "trader_class",
+            "calculated_at",
+        ]
+
+        trades = []
+        for row in result:
+            # Convert tuple to dict
+            trade_dict = dict(zip(column_names, row))
+
+            # Convert datetime objects to ISO format strings
+            for date_field in ["timestamp", "messageTimestamp", "calculated_at"]:
+                if trade_dict.get(date_field) and isinstance(
+                    trade_dict[date_field], datetime
+                ):
+                    trade_dict[date_field] = trade_dict[date_field].isoformat()
+
+            # Convert numeric types to appropriate Python types
+            if trade_dict.get("outcomeIndex") is not None:
+                trade_dict["outcomeIndex"] = int(trade_dict["outcomeIndex"])
+            if trade_dict.get("price") is not None:
+                trade_dict["price"] = float(trade_dict["price"])
+            if trade_dict.get("size") is not None:
+                trade_dict["size"] = float(trade_dict["size"])
+            if trade_dict.get("global_roi_pct") is not None:
+                trade_dict["global_roi_pct"] = float(trade_dict["global_roi_pct"])
+            if trade_dict.get("consistency_rating") is not None:
+                trade_dict["consistency_rating"] = float(
+                    trade_dict["consistency_rating"]
+                )
+            if trade_dict.get("recency_weighted_pnl") is not None:
+                trade_dict["recency_weighted_pnl"] = float(
+                    trade_dict["recency_weighted_pnl"]
+                )
+
+            trades.append(trade_dict)
+
+        return trades
+    except Exception as e:
+        print(f"Error getting trades by slug: {e}")
+        return []
+
+
 def get_trader_classes_from_db_map(proxy_wallets: List[str]) -> Dict[str, TraderClass]:
     # Convert input to lowercase and quote for SQL
     proxy_wallets_lower = [wallet.lower() for wallet in proxy_wallets]

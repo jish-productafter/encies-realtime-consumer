@@ -70,6 +70,18 @@ class TradeService:
         }
         if trader_class:
             entry_data.update(trader_class.model_dump())
+        else:
+            # add empty trader class
+            entry_data.update(
+                {
+                    "global_roi_pct": 0.0,
+                    "consistency_rating": 0.0,
+                    "recency_weighted_pnl": 0.0,
+                    "trader_class": "",
+                    "calculated_at": "",
+                }
+            )
+
         return entry_data
 
     def process_batch(self, entries: list) -> list[dict]:
