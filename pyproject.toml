@@ -1,0 +1,15 @@
+[project]
+name = "encies-realtime-consumer"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "clickhouse-driver>=0.2.10",
+    "dotenv>=0.9.9",
+    "pydantic>=2.12.5",
+    "redis>=7.1.0",
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
+    "websockets>=14.0",
+]
