@@ -4,6 +4,7 @@ WebSocket server for streaming trade data.
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query
 from fastapi.responses import HTMLResponse
+from fastapi.middleware.cors import CORSMiddleware
 import json
 import asyncio
 from typing import Set, Dict, Any, List
@@ -11,6 +12,19 @@ from app.trade_service import TradeService
 from app.db import get_trades_by_slug, get_trade_summary_by_slug
 
 app = FastAPI(title="Polymarket Trades WebSocket Server")
+
+# Add CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:3000",
+        "https://localhost:3000",
+        # Add other origins as needed
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # Store active WebSocket connections
 active_connections: Set[WebSocket] = set()
