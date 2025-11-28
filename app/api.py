@@ -11,13 +11,12 @@ import asyncio
 async def get_polymarket_holders(
     market_id: str,
     limit: int = 1000,
-    min_balance: int = 1,
 ) -> list[Holding]:
     print(
-        f"[{datetime.now().isoformat()}] getPolymarketHolders: Starting (marketId={market_id}, limit={limit}, minBalance={min_balance})"
+        f"[{datetime.now().isoformat()}] getPolymarketHolders: Starting (marketId={market_id}, limit={limit})"
     )
 
-    url = f"https://data-api.polymarket.com/holders?limit={limit}&minBalance={min_balance}&market={market_id}"
+    url = f"https://data-api.polymarket.com/holders?limit={limit}&market={market_id}"
     print(f"[{datetime.now().isoformat()}] getPolymarketHolders: Fetching from {url}")
 
     try:
