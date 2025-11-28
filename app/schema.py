@@ -7,8 +7,7 @@
 #   calculated_at: string
 # }
 
-from pydantic import BaseModel
-from typing import Optional
+from pydantic import BaseModel, Field
 
 
 class TraderClass(BaseModel):
@@ -93,3 +92,21 @@ class TradeEntry(BaseModel):
         """
         stream_name, entries = message
         return cls.decode_batch(entries)
+
+
+# Polymarket API Holding type (from data-api.polymarket.com)
+class Holding(BaseModel):
+    proxy_wallet: str = Field(alias="proxyWallet")
+    bio: str
+    asset: str
+    pseudonym: str
+    amount: float
+    display_username_public: bool = Field(alias="displayUsernamePublic")
+    outcome_index: int = Field(alias="outcomeIndex")
+    name: str
+    profile_image: str = Field(alias="profileImage")
+    profile_image_optimized: str = Field(alias="profileImageOptimized")
+    verified: bool
+
+    class Config:
+        populate_by_name = True  # Allows both snake_case and camelCase

@@ -9,7 +9,9 @@ import json
 import asyncio
 from typing import Set, Dict, Any, List
 from app.trade_service import TradeService
-from app.db import get_trades_by_slug, get_trade_summary_by_slug
+from app.db import get_trades_by_slug, get_trader_classes_from_db_map
+from app.api import get_polymarket_holders
+from app.schema import TraderClass
 
 app = FastAPI(title="Polymarket Trades WebSocket Server")
 
@@ -139,15 +141,38 @@ async def get_trades(
     return {"slug": slug, "count": len(trades), "trades": trades}
 
 
-@app.get("/trade-summary")
-async def get_trade_summary(
-    slug: str = Query(..., description="The slug to filter trades by")
+@app.get("/holders")
+async def get_holders(
+    marketId: str = Query(..., description="The marketId to filter holders by")
 ):
     """
-    Get trade summary from polymarket.current_trades table filtered by slug.
+    Get holders from polymarket.current_trades table filtered by marketId.
     """
-    summary = get_trade_summary_by_slug(slug)
-    return {"slug": slug, "summary": summary}
+    holders = await get_polymarket_holders(marketId)
+    # get trader classes from db map
+    trader_classes = get_trader_classes_from_db_map(
+        [holder.proxy_wallet for holder in holders]
+    )
+    result = []
+    for holder in holders:
+        trader_class = trader_classes.get(
+            holder.proxy_wallet.lower(),
+            TraderClass(
+                proxyWallet=holder.proxy_wallet,
+                global_roi_pct=0.0,
+                consistency_rating=0.0,
+                recency_weighted_pnl=0.0,
+                trader_class="",
+                calculated_at="",
+            ),
+        )
+        result.append(
+            {
+                **holder.model_dump(),
+                **trader_class.model_dump(exclude={"proxyWallet": True}),
+            }
+        )
+    return {"marketId": marketId, "count": len(result), "holders": result}
 
 
 @app.websocket("/trades")
