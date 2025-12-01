@@ -550,10 +550,11 @@ def get_pro_trader_trade_summary_by_market_id(market_id: str) -> List[Dict[str, 
     # Escape the market_id to prevent SQL injection
     escaped_market_id = market_id.replace("'", "''")
     query = f"""
-    SELECT 
+        SELECT 
             conditionId,
             asset,
-            sum(if(side = 'BUY', size, 0)) - sum(if(side = 'SELL', size, 0)) as total_current_position
+            sum(if(side = 'BUY', size, 0)) - sum(if(side = 'SELL', size, 0)) as total_current_position,
+            uniq(proxyWallet) as num_traders
     FROM polymarket.current_trades
     WHERE trader_class IN ('GOD-TIER', 'PRO') 
     AND conditionId = '{escaped_market_id}'
@@ -567,6 +568,7 @@ def get_pro_trader_trade_summary_by_market_id(market_id: str) -> List[Dict[str, 
         "conditionId",
         "asset",
         "total_current_position",
+        "num_traders",
     ]
     summaries = []
     for row in data:
