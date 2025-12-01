@@ -92,7 +92,9 @@ async def broadcast_to_all(trade_data: Dict[str, Any]):
             summary = get_pro_trader_trade_summary_by_market_id(conditionId)
             print(user_config, conditionId, summary)
             if user_config:
-                message = json.dumps({"type": "pro_trader_trade_summary", "summary": summary})
+                message = json.dumps(
+                    {"type": "pro_trader_trade_summary", "summary": summary}
+                )
 
             await connection.send_text(message)
         except Exception as e:
@@ -242,9 +244,26 @@ async def websocket_user_trades_endpoint(websocket: WebSocket, user_id: str):
     identical to the existing `/trades` websocket.
     """
     await websocket.accept()
-    active_connections.add(websocket)
-    # Store filter for this connection so broadcast only sends matching trades
+
+    # Check if user config exists before proceeding
     user_config = get_user_config(user_id)
+    if not user_config:
+        # Send error message and close connection gracefully
+        await websocket.send_json(
+            {
+                "type": "error",
+                "message": f"User config not found for user_id: {user_id}",
+                "user_id": user_id,
+            }
+        )
+        await websocket.close(code=1008, reason=f"User config not found: {user_id}")
+        print(
+            f"WebSocket connection rejected: User config not found for user_id={user_id}"
+        )
+        return
+
+    # User config exists, proceed with connection
+    active_connections.add(websocket)
     connection_filters[websocket] = {"user_config": user_config}
     print(
         f"User-specific WebSocket client connected (user_id={user_id}). "
