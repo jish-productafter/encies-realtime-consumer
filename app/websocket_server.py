@@ -12,6 +12,7 @@ from app.trade_service import TradeService
 from app.db import get_trades_by_slug, get_trader_classes_from_db_map
 from app.api import get_polymarket_holders
 from app.schema import TraderClass
+from firebase import get_user_config
 
 app = FastAPI(title="Polymarket Trades WebSocket Server")
 
@@ -30,6 +31,9 @@ app.add_middleware(
 
 # Store active WebSocket connections
 active_connections: Set[WebSocket] = set()
+
+# Optional per-connection filters (e.g. by user id)
+connection_filters: Dict[WebSocket, Dict[str, Any]] = {}
 
 # Trade service instance
 trade_service: TradeService = None
@@ -77,6 +81,15 @@ async def broadcast_to_all(trade_data: Dict[str, Any]):
 
     for connection in active_connections:
         try:
+            # Apply optional per-connection filters
+            filters = connection_filters.get(connection)
+            if filters:
+                user_id = filters.get("user_id")
+                if user_id is not None:
+                    # Only send if the trade's connection_id matches the requested user_id
+                    if str(trade_data.get("connection_id")) != str(user_id):
+                        continue
+
             await connection.send_text(message)
         except Exception as e:
             print(f"Error sending to WebSocket client: {e}")
@@ -185,6 +198,8 @@ async def websocket_trades_endpoint(websocket: WebSocket):
     """
     await websocket.accept()
     active_connections.add(websocket)
+    # No filters for this connection – receives all trades
+    connection_filters[websocket] = {}
     print(f"WebSocket client connected. Total connections: {len(active_connections)}")
 
     try:
@@ -207,8 +222,57 @@ async def websocket_trades_endpoint(websocket: WebSocket):
         print(f"WebSocket error: {e}")
     finally:
         active_connections.discard(websocket)
+        connection_filters.pop(websocket, None)
         print(
             f"WebSocket client disconnected. Total connections: {len(active_connections)}"
+        )
+
+
+@app.websocket("/user_trades/{user_id}")
+async def websocket_user_trades_endpoint(websocket: WebSocket, user_id: str):
+    """
+    WebSocket endpoint for streaming trade data for a specific user.
+
+    The user id is taken as a path parameter and is matched against the
+    `connection_id` field on incoming trade packets. The payload format is
+    identical to the existing `/trades` websocket.
+    """
+    await websocket.accept()
+    active_connections.add(websocket)
+    # Store filter for this connection so broadcast only sends matching trades
+    connection_filters[websocket] = {"user_id": user_id}
+    print(
+        f"User-specific WebSocket client connected (user_id={user_id}). "
+        f"Total connections: {len(active_connections)}"
+    )
+    user_config = get_user_config(user_id)
+    try:
+        # Send welcome message
+        await websocket.send_json(
+            {
+                "type": "connected",
+                "message": "Connected to user trades stream",
+                "user_id": user_id,
+                "user_config": user_config,
+            }
+        )
+
+        # Keep connection alive and handle incoming messages (if any)
+        while True:
+            try:
+                data = await websocket.receive_text()
+                if data == "ping":
+                    await websocket.send_json({"type": "pong", "user_id": user_id})
+            except WebSocketDisconnect:
+                break
+    except Exception as e:
+        print(f"User trades WebSocket error (user_id={user_id}): {e}")
+    finally:
+        active_connections.discard(websocket)
+        connection_filters.pop(websocket, None)
+        print(
+            f"User-specific WebSocket client disconnected (user_id={user_id}). "
+            f"Total connections: {len(active_connections)}"
         )
 
 
