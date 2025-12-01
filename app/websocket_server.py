@@ -9,7 +9,11 @@ import json
 import asyncio
 from typing import Set, Dict, Any, List
 from app.trade_service import TradeService
-from app.db import get_trades_by_slug, get_trader_classes_from_db_map
+from app.db import (
+    get_trades_by_slug,
+    get_trader_classes_from_db_map,
+    get_pro_trader_trade_summary_by_market_id,
+)
 from app.api import get_polymarket_holders
 from app.schema import TraderClass
 from firebase import get_user_config
@@ -83,12 +87,12 @@ async def broadcast_to_all(trade_data: Dict[str, Any]):
         try:
             # Apply optional per-connection filters
             filters = connection_filters.get(connection)
-            if filters:
-                user_id = filters.get("user_id")
-                if user_id is not None:
-                    # Only send if the trade's connection_id matches the requested user_id
-                    if str(trade_data.get("connection_id")) != str(user_id):
-                        continue
+            user_config = filters.get("user_config")
+            conditionId = trade_data.get("conditionId")
+            summary = get_pro_trader_trade_summary_by_market_id(conditionId)
+            print(user_config, conditionId, summary)
+            if user_config:
+                message = json.dumps({"type": "pro_trader_trade_summary", "summary": summary})
 
             await connection.send_text(message)
         except Exception as e:
@@ -240,12 +244,12 @@ async def websocket_user_trades_endpoint(websocket: WebSocket, user_id: str):
     await websocket.accept()
     active_connections.add(websocket)
     # Store filter for this connection so broadcast only sends matching trades
-    connection_filters[websocket] = {"user_id": user_id}
+    user_config = get_user_config(user_id)
+    connection_filters[websocket] = {"user_config": user_config}
     print(
         f"User-specific WebSocket client connected (user_id={user_id}). "
         f"Total connections: {len(active_connections)}"
     )
-    user_config = get_user_config(user_id)
     try:
         # Send welcome message
         await websocket.send_json(

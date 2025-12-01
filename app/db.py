@@ -42,12 +42,22 @@ CLICKHOUSE_PASSWORD = os.getenv("CLICKHOUSE_PASSWORD", "")
 CLICKHOUSE_PORT = os.getenv("CLICKHOUSE_PORT", 8123)
 
 
-client = Client(
-    host=CLICKHOUSE_HOST,
-    port=CLICKHOUSE_PORT,
-    user=CLICKHOUSE_USER,
-    password=CLICKHOUSE_PASSWORD,
-)
+def get_clickhouse_client() -> Client:
+    """
+    Create a new ClickHouse client instance.
+
+    Note:
+        The clickhouse-driver Client is not thread-safe. This function returns
+        a fresh client so that each thread / executor task uses its own
+        connection, avoiding "Simultaneous queries on single connection
+        detected" errors when used from different threads.
+    """
+    return Client(
+        host=CLICKHOUSE_HOST,
+        port=CLICKHOUSE_PORT,
+        user=CLICKHOUSE_USER,
+        password=CLICKHOUSE_PASSWORD,
+    )
 
 
 def bulk_insert_current_trades(data: List[Dict[str, Any]]):
@@ -209,18 +219,19 @@ def bulk_insert_current_trades(data: List[Dict[str, Any]]):
             )
             rows.append(row)
 
-        # Bulk insert
-        client.execute(
-            """
-            INSERT INTO polymarket.current_trades (
-                id, asset, bio, conditionId, eventSlug, icon, name, outcome, outcomeIndex,
-                price, profileImage, proxyWallet, pseudonym, side, size, slug, timestamp,
-                title, transactionHash, topic, type, messageTimestamp, connection_id, rawType,
-                global_roi_pct, consistency_rating, recency_weighted_pnl, trader_class, calculated_at
-            ) VALUES
-            """,
-            rows,
-        )
+        # Bulk insert - use a fresh client/connection for this operation
+        with get_clickhouse_client() as client:
+            client.execute(
+                """
+                INSERT INTO polymarket.current_trades (
+                    id, asset, bio, conditionId, eventSlug, icon, name, outcome, outcomeIndex,
+                    price, profileImage, proxyWallet, pseudonym, side, size, slug, timestamp,
+                    title, transactionHash, topic, type, messageTimestamp, connection_id, rawType,
+                    global_roi_pct, consistency_rating, recency_weighted_pnl, trader_class, calculated_at
+                ) VALUES
+                """,
+                rows,
+            )
         print(f"✓ Inserted {len(rows)} trades into polymarket.current_trades")
     except Exception as e:
         print(f"Error bulk inserting trades: {e}")
@@ -250,7 +261,8 @@ def get_trades_by_slug(slug: str) -> List[Dict[str, Any]]:
         ORDER BY timestamp DESC
     """
     try:
-        result = client.execute(query)
+        with get_clickhouse_client() as client:
+            result = client.execute(query)
         # Column names matching the SELECT order
         column_names = [
             "id",
@@ -373,7 +385,8 @@ def get_trader_classes_from_db_map(proxy_wallets: List[str]) -> Dict[str, Trader
         quoted_wallets = [f"'{wallet}'" for wallet in cache_misses]
         query = f"SELECT proxyWallet, global_roi_pct, consistency_rating, recency_weighted_pnl, trader_class, calculated_at FROM polymarket.trader_alpha_scores final WHERE lower(proxyWallet) IN ({','.join(quoted_wallets)})"
         try:
-            db_result = client.execute(query)
+            with get_clickhouse_client() as client:
+                db_result = client.execute(query)
             db_rows_count = 0
             cached_count = 0
 
@@ -475,7 +488,8 @@ def get_trade_summary_by_slug(slug: str) -> List[Dict[str, Any]]:
     """
 
     try:
-        result = client.execute(query)
+        with get_clickhouse_client() as client:
+            result = client.execute(query)
         # Column names matching the SELECT order
         column_names = [
             "proxyWallet",
@@ -530,3 +544,32 @@ def get_trade_summary_by_slug(slug: str) -> List[Dict[str, Any]]:
     except Exception as e:
         print(f"Error getting trade summary by slug: {e}")
         return []
+
+
+def get_pro_trader_trade_summary_by_market_id(market_id: str) -> List[Dict[str, Any]]:
+    # Escape the market_id to prevent SQL injection
+    escaped_market_id = market_id.replace("'", "''")
+    query = f"""
+    SELECT 
+            conditionId,
+            asset,
+            sum(if(side = 'BUY', size, 0)) - sum(if(side = 'SELL', size, 0)) as total_current_position
+    FROM polymarket.current_trades
+    WHERE trader_class IN ('GOD-TIER', 'PRO') 
+    AND conditionId = '{escaped_market_id}'
+    GROUP BY conditionId, asset
+    HAVING total_current_position > 0
+    ORDER BY total_current_position DESC
+    """
+    with get_clickhouse_client() as client:
+        data = client.execute(query)
+    column_names = [
+        "conditionId",
+        "asset",
+        "total_current_position",
+    ]
+    summaries = []
+    for row in data:
+        summary_dict = dict(zip(column_names, row))
+        summaries.append(summary_dict)
+    return summaries
