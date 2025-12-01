@@ -2,7 +2,7 @@
 WebSocket server for streaming trade data.
 """
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query, HTTPException
 from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 import json
@@ -13,6 +13,7 @@ from app.db import (
     get_trades_by_slug,
     get_trader_classes_from_db_map,
     get_pro_trader_trade_summary_by_market_id,
+    get_pro_trader_trade_summary_by_market_ids,
 )
 from app.api import get_polymarket_holders
 from app.schema import TraderClass
@@ -297,6 +298,40 @@ async def websocket_user_trades_endpoint(websocket: WebSocket, user_id: str):
             f"User-specific WebSocket client disconnected (user_id={user_id}). "
             f"Total connections: {len(active_connections)}"
         )
+
+
+@app.get("/user_trades/{user_id}")
+async def get_user_trades(
+    user_id: str,
+    marketIds: List[str] = Query(
+        ..., description="Array of marketIds to get trade summaries for"
+    ),
+):
+    """
+    Get pro trader trade summaries for a specific user and array of marketIds.
+
+    Args:
+        user_id: The user ID to validate user config
+        marketIds: Array of marketIds (conditionIds) to get trade summaries for
+
+    Returns:
+        Dictionary containing user_id, marketIds, and aggregated trade summaries
+    """
+    # Check if user config exists
+    user_config = get_user_config(user_id)
+    if not user_config:
+        raise HTTPException(
+            status_code=404, detail=f"User config not found for user_id: {user_id}"
+        )
+
+    # Get trade summaries for each marketId
+    all_summaries = get_pro_trader_trade_summary_by_market_ids(marketIds)
+
+    return {
+        "user_id": user_id,
+        "marketIds": marketIds,
+        "summaries": all_summaries,
+    }
 
 
 @app.on_event("startup")

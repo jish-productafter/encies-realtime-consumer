@@ -575,3 +575,32 @@ def get_pro_trader_trade_summary_by_market_id(market_id: str) -> List[Dict[str, 
         summary_dict = dict(zip(column_names, row))
         summaries.append(summary_dict)
     return summaries
+
+def get_pro_trader_trade_summary_by_market_ids(market_ids: List[str]) -> List[Dict[str, Any]]:
+    # Escape the market_ids to prevent SQL injection
+    escaped_market_ids = [market_id.replace("'", "''") for market_id in market_ids]
+    query = f"""
+        SELECT 
+            conditionId,
+            asset,
+            sum(if(side = 'BUY', size, 0)) - sum(if(side = 'SELL', size, 0)) as total_current_position,
+            uniq(proxyWallet) as num_traders
+    FROM polymarket.current_trades
+    WHERE trader_class IN ('GOD-TIER', 'PRO') AND conditionId IN ({','.join(escaped_market_ids)})
+    GROUP BY conditionId, asset
+    HAVING total_current_position > 0
+    ORDER BY total_current_position DESC
+    """
+    with get_clickhouse_client() as client:
+        data = client.execute(query)
+    column_names = [
+        "conditionId",
+        "asset",
+        "total_current_position",
+        "num_traders",
+    ]
+    summaries = []
+    for row in data:
+        summary_dict = dict(zip(column_names, row))
+        summaries.append(summary_dict)
+    return summaries
